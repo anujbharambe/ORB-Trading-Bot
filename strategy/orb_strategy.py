@@ -15,6 +15,7 @@ import pandas as pd
 
 from utils.time_utils import TimeManager
 from broker.angel_client import AngelOneClient
+from utils.config import TRADES_LOG_PATH, SYMBOL_CONFIG, compute_quantity
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -104,11 +105,8 @@ class ORBStrategy:
     3. Only ONE trade per day
     4. Exit at 3:20 PM
     5. No stop loss
-    6. Position size: 1 share
+    6. Position size: configurable via config.yaml
     """
-    
-    POSITION_SIZE = 1
-    TRADES_LOG_PATH = "logs/trades.csv"
     
     def __init__(self, broker: AngelOneClient):
         """
@@ -126,12 +124,12 @@ class ORBStrategy:
         
     def _ensure_logs_directory(self) -> None:
         """Ensure logs directory exists."""
-        os.makedirs("logs", exist_ok=True)
+        os.makedirs(os.path.dirname(TRADES_LOG_PATH), exist_ok=True)
         
     def _initialize_csv_log(self) -> None:
         """Initialize CSV trade log with headers if not exists."""
-        if not os.path.exists(self.TRADES_LOG_PATH):
-            with open(self.TRADES_LOG_PATH, 'w', newline='') as f:
+        if not os.path.exists(TRADES_LOG_PATH):
+            with open(TRADES_LOG_PATH, 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([
                     'timestamp', 'action', 'price', 'quantity', 
@@ -146,7 +144,7 @@ class ORBStrategy:
             trade: Trade object to log
         """
         try:
-            with open(self.TRADES_LOG_PATH, 'a', newline='') as f:
+            with open(TRADES_LOG_PATH, 'a', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([
                     trade.timestamp,
@@ -228,11 +226,11 @@ class ORBStrategy:
         Returns:
             bool: True if position was recovered or daily flags were set
         """
-        if not os.path.exists(self.TRADES_LOG_PATH):
+        if not os.path.exists(TRADES_LOG_PATH):
             return False
         
         try:
-            df = pd.read_csv(self.TRADES_LOG_PATH)
+            df = pd.read_csv(TRADES_LOG_PATH)
             if df.empty:
                 return False
             
@@ -347,16 +345,19 @@ class ORBStrategy:
             
         transaction_type = "BUY" if position_type == PositionType.LONG else "SELL"
         
+        # Compute position size from config
+        qty = compute_quantity(price)
+        
         # Place order via broker
         order_result = self.broker.place_order(
             transaction_type=transaction_type,
-            quantity=self.POSITION_SIZE
+            quantity=qty
         )
         
         if order_result['status']:
             self.state.position = position_type
             self.state.entry_price = order_result.get('price', price)
-            self.state.quantity = self.POSITION_SIZE
+            self.state.quantity = qty
             self.state.trade_taken_today = True
             self.state.strategy_state = StrategyState.POSITION_OPEN
             
@@ -365,7 +366,7 @@ class ORBStrategy:
                 timestamp=TimeManager.format_timestamp(),
                 action=transaction_type,
                 price=self.state.entry_price,
-                quantity=self.POSITION_SIZE,
+                quantity=qty,
                 position_type=position_type.value,
                 order_id=order_result.get('order_id', '')
             )

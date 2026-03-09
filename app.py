@@ -13,6 +13,7 @@ from datetime import timedelta
 from strategy.bot_runner import BotRunner
 from strategy.orb_strategy import StrategyState, PositionType
 from utils.time_utils import TimeManager
+from utils.config import SYMBOL_CONFIG, POSITION_SIZING_MODE, FIXED_QUANTITY, FIXED_CAPITAL, PERCENT_OF_CAPITAL, CAPITAL, TRADES_LOG_PATH
 
 
 # Page configuration
@@ -138,8 +139,13 @@ def render_sidebar():
 
     # Strategy parameters (read-only display)
     st.sidebar.subheader("📊 Strategy Parameters")
-    st.sidebar.text("Symbol: RELIANCE-EQ (NSE)")
-    st.sidebar.text("Position Size: 1 share")
+    st.sidebar.text(f"Symbol: {SYMBOL_CONFIG['tradingsymbol']} ({SYMBOL_CONFIG['exchange']})")
+    if POSITION_SIZING_MODE == "fixed_quantity":
+        st.sidebar.text(f"Position Size: {FIXED_QUANTITY} share(s)")
+    elif POSITION_SIZING_MODE == "fixed_capital":
+        st.sidebar.text(f"Position Size: ₹{FIXED_CAPITAL:,.0f} capital")
+    else:
+        st.sidebar.text(f"Position Size: {PERCENT_OF_CAPITAL}% of ₹{CAPITAL:,.0f}")
     st.sidebar.text("Leverage: ~5x (Intraday)")
     st.sidebar.text("Stop Loss: None")
 
@@ -229,10 +235,9 @@ def live_dashboard():
 @st.fragment(run_every=timedelta(seconds=10))
 def trade_log_fragment():
     st.subheader("📝 Trade Log")
-    trades_file = "logs/trades.csv"
-    if os.path.exists(trades_file):
+    if os.path.exists(TRADES_LOG_PATH):
         try:
-            df = pd.read_csv(trades_file)
+            df = pd.read_csv(TRADES_LOG_PATH)
             if not df.empty:
                 display_df = df.copy()
                 display_df['price'] = display_df['price'].apply(lambda x: f"₹{x:,.2f}")
@@ -296,7 +301,7 @@ def main():
     col1, col2, col3 = st.columns([2, 3, 2])
     with col2:
         st.title("📈 ORB Trading Bot")
-        st.caption("Opening Range Breakout Strategy - Reliance Industries (NSE)")
+        st.caption(f"Opening Range Breakout Strategy - {SYMBOL_CONFIG['tradingsymbol']} ({SYMBOL_CONFIG['exchange']})")
     with col3:
         ti = TimeManager.get_time_display()
         st.metric("Current Time (IST)", ti['current_time'].split(' ')[1])

@@ -1,0 +1,41 @@
+# ──────────────────────────────────────────────────────────────────
+# ORB Trading Bot — Centralized Configuration
+# ──────────────────────────────────────────────────────────────────
+# Edit this file to change the traded symbol, position sizing,
+# market timings, and bot behaviour — no code changes needed.
+# ──────────────────────────────────────────────────────────────────
+
+# Trading Symbol Configuration
+symbol:
+  exchange: "NSE"
+  tradingsymbol: "RELIANCE-EQ"
+  symboltoken: "2885"
+
+# Position Sizing
+# mode options: fixed_quantity | fixed_capital | percent_of_capital
+#   fixed_quantity   → trade exactly `fixed_quantity` shares
+#   fixed_capital    → buy shares worth `fixed_capital` rupees (floored to whole shares)
+#   percent_of_capital → buy shares worth `percent_of_capital`% of `capital`
+position_sizing:
+  mode: "fixed_quantity"
+  fixed_quantity: 1
+  fixed_capital: 10000
+  percent_of_capital: 5
+  capital: 100000
+
+# Market Timings (IST, 24-hour HH:MM)
+market_timings:
+  market_open: "09:15"
+  market_close: "15:30"
+  range_end: "11:15"
+  exit_time: "15:20"
+
+# Bot Settings
+bot:
+  tick_interval: 5            # seconds between strategy ticks
+  health_check_interval: 60   # seconds between health checks
+  retry_delays: [5, 10, 20]   # exponential backoff for reconnection (seconds)
+
+# Logging
+logging:
+  trades_log_path: "logs/trades.csv"

@@ -12,6 +12,8 @@ from SmartApi.smartExceptions import TokenException, DataException
 import pyotp
 from dotenv import load_dotenv
 
+from utils.config import SYMBOL_CONFIG, RETRY_DELAYS
+
 # Load environment variables
 load_dotenv()
 
@@ -25,13 +27,6 @@ class AngelOneClient:
     Wrapper class for Angel One SmartAPI.
     Handles authentication, LTP fetching, and order placement.
     """
-    
-    # Symbol configuration for Reliance Industries
-    RELIANCE_CONFIG = {
-        'exchange': 'NSE',
-        'tradingsymbol': 'RELIANCE-EQ',
-        'symboltoken': '2885',  # NSE token for Reliance
-    }
     
     def __init__(self, paper_trading: bool = True):
         """
@@ -132,9 +127,6 @@ class AngelOneClient:
             self.is_connected = False
             return True
     
-    # Retry delays in seconds for exponential backoff
-    RETRY_DELAYS = [5, 10, 20]
-    
     def reconnect(self) -> bool:
         """
         Attempt to reconnect with exponential backoff.
@@ -144,8 +136,8 @@ class AngelOneClient:
             bool: True if reconnection successful
         """
         self.disconnect()
-        for attempt, delay in enumerate(self.RETRY_DELAYS, 1):
-            logger.info(f"Reconnect attempt {attempt}/{len(self.RETRY_DELAYS)}...")
+        for attempt, delay in enumerate(RETRY_DELAYS, 1):
+            logger.info(f"Reconnect attempt {attempt}/{len(RETRY_DELAYS)}...")
             if self.connect():
                 return True
             logger.warning(f"Reconnect attempt {attempt} failed. Waiting {delay}s...")
@@ -170,13 +162,13 @@ class AngelOneClient:
         Fetch Last Traded Price for a symbol.
         
         Args:
-            symbol_config: Symbol configuration dict (defaults to Reliance)
+            symbol_config: Symbol configuration dict (defaults to config.yaml symbol)
             
         Returns:
             float: Last traded price, or None if fetch fails
         """
         if symbol_config is None:
-            symbol_config = self.RELIANCE_CONFIG
+            symbol_config = SYMBOL_CONFIG
             
         try:
             if not self._ensure_connected():
@@ -229,7 +221,7 @@ class AngelOneClient:
                   or None on failure
         """
         if symbol_config is None:
-            symbol_config = self.RELIANCE_CONFIG
+            symbol_config = SYMBOL_CONFIG
             
         try:
             if not self._ensure_connected():
@@ -273,7 +265,7 @@ class AngelOneClient:
             dict: Quote data including open, high, low, close, etc.
         """
         if symbol_config is None:
-            symbol_config = self.RELIANCE_CONFIG
+            symbol_config = SYMBOL_CONFIG
             
         try:
             if not self._ensure_connected():
@@ -318,7 +310,7 @@ class AngelOneClient:
             dict: Order response with status and order_id
         """
         if symbol_config is None:
-            symbol_config = self.RELIANCE_CONFIG
+            symbol_config = SYMBOL_CONFIG
             
         order_result = {
             'status': False,

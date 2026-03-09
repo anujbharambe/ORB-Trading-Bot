@@ -7,6 +7,13 @@ from datetime import datetime, time
 import pytz
 from typing import Tuple
 
+from utils.config import (
+    MARKET_OPEN as _CFG_MARKET_OPEN,
+    MARKET_CLOSE as _CFG_MARKET_CLOSE,
+    RANGE_END as _CFG_RANGE_END,
+    EXIT_TIME as _CFG_EXIT_TIME,
+)
+
 
 class TimeManager:
     """
@@ -17,11 +24,11 @@ class TimeManager:
     # Indian Standard Time zone
     IST = pytz.timezone('Asia/Kolkata')
     
-    # Market timing constants
-    MARKET_OPEN = time(9, 15)       # 9:15 AM IST
-    MARKET_CLOSE = time(15, 30)     # 3:30 PM IST
-    RANGE_END = time(11, 15)        # 11:15 AM IST - End of opening range
-    EXIT_TIME = time(15, 20)        # 3:20 PM IST - Exit all positions
+    # Market timing constants (loaded from config.yaml)
+    MARKET_OPEN = _CFG_MARKET_OPEN
+    MARKET_CLOSE = _CFG_MARKET_CLOSE
+    RANGE_END = _CFG_RANGE_END
+    EXIT_TIME = _CFG_EXIT_TIME
     
     @classmethod
     def get_current_time(cls) -> datetime:

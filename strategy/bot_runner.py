@@ -11,13 +11,12 @@ from typing import Dict, Any, List
 from broker.angel_client import AngelOneClient
 from strategy.orb_strategy import ORBStrategy
 from utils.time_utils import TimeManager
+from utils.config import TICK_INTERVAL, HEALTH_CHECK_INTERVAL
 
 logger = logging.getLogger(__name__)
 
-# How often the strategy tick runs (seconds)
-TICK_INTERVAL = 5
-# How often to run a health check (number of ticks between checks)
-HEALTH_CHECK_EVERY_N_TICKS = 12  # ~60 seconds
+# Derive the tick-count threshold from the two config values
+HEALTH_CHECK_EVERY_N_TICKS = max(1, HEALTH_CHECK_INTERVAL // TICK_INTERVAL)
 
 
 class BotRunner:
