@@ -11,6 +11,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
+import pandas as pd
+
 from utils.time_utils import TimeManager
 from broker.angel_client import AngelOneClient
 
@@ -118,6 +120,7 @@ class ORBStrategy:
         self.broker = broker
         self.state = ORBState()
         self.is_running = False
+        self._recovery_attempted = False
         self._ensure_logs_directory()
         self._initialize_csv_log()
         
@@ -167,6 +170,115 @@ class ORBStrategy:
             self.state = ORBState()
             self.state.last_trade_date = today
             self.state.strategy_state = StrategyState.IDLE
+            self._recovery_attempted = False
+    
+    def recover_range_from_history(self) -> bool:
+        """
+        Recover the opening range by fetching historical 5-min candles from SmartAPI.
+        Called when range_high/range_low are None after a restart.
+        
+        Returns:
+            bool: True if range was recovered successfully
+        """
+        if self._recovery_attempted:
+            return False
+        self._recovery_attempted = True
+        
+        today = TimeManager.get_today_date()
+        from_date = f"{today} 09:15"
+        
+        # Determine the end of the candle window
+        if TimeManager.is_range_building_period():
+            # Still building range — fetch whatever candles are available so far
+            current = TimeManager.get_current_time()
+            to_date = current.strftime('%Y-%m-%d %H:%M')
+        else:
+            to_date = f"{today} 11:15"
+        
+        logger.info(f"Recovering range from candle data: {from_date} to {to_date}")
+        
+        candles = self.broker.get_candle_data(from_date=from_date, to_date=to_date)
+        if not candles:
+            logger.warning("No candle data available for range recovery.")
+            return False
+        
+        # Candle format: [timestamp, open, high, low, close, volume]
+        highs = [float(c[2]) for c in candles]
+        lows = [float(c[3]) for c in candles]
+        
+        self.state.range_high = max(highs)
+        self.state.range_low = min(lows)
+        
+        # If past the range-building window, mark range as complete
+        if not TimeManager.is_range_building_period():
+            self.state.range_complete = True
+        
+        logger.info(
+            f"Range recovered from {len(candles)} candles — "
+            f"High: {self.state.range_high}, Low: {self.state.range_low}, "
+            f"Complete: {self.state.range_complete}"
+        )
+        return True
+    
+    def recover_position_from_trades(self) -> bool:
+        """
+        Recover position state from today's entries in trades.csv.
+        If an entry trade exists without a matching exit, restore the position.
+        
+        Returns:
+            bool: True if position was recovered or daily flags were set
+        """
+        if not os.path.exists(self.TRADES_LOG_PATH):
+            return False
+        
+        try:
+            df = pd.read_csv(self.TRADES_LOG_PATH)
+            if df.empty:
+                return False
+            
+            today = TimeManager.get_today_date()
+            today_trades = df[df['timestamp'].str.startswith(today)]
+            
+            if today_trades.empty:
+                return False
+            
+            # Check for entry trades (BUY / SELL) and exit trades (EXIT_LONG / EXIT_SHORT)
+            entries = today_trades[today_trades['action'].isin(['BUY', 'SELL'])]
+            exits = today_trades[today_trades['action'].isin(['EXIT_LONG', 'EXIT_SHORT'])]
+            
+            if entries.empty:
+                return False
+            
+            last_entry = entries.iloc[-1]
+            
+            if not exits.empty:
+                # Trade was completed today — set flag to prevent another trade
+                self.state.trade_taken_today = True
+                self.state.realized_pnl = float(exits['pnl'].sum())
+                self.state.position = PositionType.NONE
+                self.state.strategy_state = StrategyState.POSITION_CLOSED
+                logger.info("Recovery: Today's trade already completed (entry + exit found).")
+            else:
+                # Open position found — restore it
+                self.state.trade_taken_today = True
+                self.state.entry_price = float(last_entry['price'])
+                self.state.quantity = int(last_entry['quantity'])
+                
+                if last_entry['action'] == 'BUY':
+                    self.state.position = PositionType.LONG
+                else:
+                    self.state.position = PositionType.SHORT
+                
+                self.state.strategy_state = StrategyState.POSITION_OPEN
+                logger.info(
+                    f"Recovery: Restored {self.state.position.value} position "
+                    f"at {self.state.entry_price}"
+                )
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error recovering position from trades: {e}")
+            return False
     
     def update_range(self, price: float) -> None:
         """
@@ -371,6 +483,11 @@ class ORBStrategy:
         if not TimeManager.is_market_open():
             self.state.strategy_state = StrategyState.MARKET_CLOSED
             return self.get_state_summary()
+        
+        # Attempt recovery if range is missing (e.g. after a restart)
+        if self.state.range_high is None and not self._recovery_attempted:
+            self.recover_range_from_history()
+            self.recover_position_from_trades()
         
         # Fetch current price
         price = self.broker.get_ltp()

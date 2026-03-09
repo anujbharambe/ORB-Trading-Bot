@@ -4,8 +4,9 @@ Handles all broker interactions including authentication, data fetching, and ord
 """
 
 import os
+import time
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from SmartApi import SmartConnect
 from SmartApi.smartExceptions import TokenException, DataException
 import pyotp
@@ -131,16 +132,38 @@ class AngelOneClient:
             self.is_connected = False
             return True
     
+    # Retry delays in seconds for exponential backoff
+    RETRY_DELAYS = [5, 10, 20]
+    
     def reconnect(self) -> bool:
         """
-        Attempt to reconnect if session expired.
+        Attempt to reconnect with exponential backoff.
+        Retries up to 3 times with increasing delays.
         
         Returns:
             bool: True if reconnection successful
         """
-        logger.info("Attempting to reconnect...")
         self.disconnect()
-        return self.connect()
+        for attempt, delay in enumerate(self.RETRY_DELAYS, 1):
+            logger.info(f"Reconnect attempt {attempt}/{len(self.RETRY_DELAYS)}...")
+            if self.connect():
+                return True
+            logger.warning(f"Reconnect attempt {attempt} failed. Waiting {delay}s...")
+            time.sleep(delay)
+        logger.error("All reconnect attempts failed.")
+        return False
+    
+    def _ensure_connected(self) -> bool:
+        """
+        Ensure broker is connected. Reconnect if needed.
+        
+        Returns:
+            bool: True if connected (or successfully reconnected)
+        """
+        if self.is_connected:
+            return True
+        logger.warning("Not connected. Attempting to connect...")
+        return self.reconnect()
     
     def get_ltp(self, symbol_config: Dict = None) -> Optional[float]:
         """
@@ -156,10 +179,8 @@ class AngelOneClient:
             symbol_config = self.RELIANCE_CONFIG
             
         try:
-            if not self.is_connected:
-                logger.warning("Not connected. Attempting to connect...")
-                if not self.connect():
-                    return None
+            if not self._ensure_connected():
+                return None
             
             ltp_data = self.smart_api.ltpData(
                 exchange=symbol_config['exchange'],
@@ -187,6 +208,60 @@ class AngelOneClient:
             logger.error(f"Error fetching LTP: {e}")
             return None
     
+    def get_candle_data(
+        self,
+        from_date: str,
+        to_date: str,
+        interval: str = 'FIVE_MINUTE',
+        symbol_config: Dict = None
+    ) -> Optional[List[Dict]]:
+        """
+        Fetch historical candle data for a symbol.
+        
+        Args:
+            from_date: Start datetime string (format: 'YYYY-MM-DD HH:MM')
+            to_date: End datetime string (format: 'YYYY-MM-DD HH:MM')
+            interval: Candle interval ('ONE_MINUTE', 'FIVE_MINUTE', 'FIFTEEN_MINUTE', etc.)
+            symbol_config: Symbol configuration dict (defaults to Reliance)
+            
+        Returns:
+            list: List of candle dicts with [timestamp, open, high, low, close, volume]
+                  or None on failure
+        """
+        if symbol_config is None:
+            symbol_config = self.RELIANCE_CONFIG
+            
+        try:
+            if not self._ensure_connected():
+                return None
+            
+            candle_params = {
+                "exchange": symbol_config['exchange'],
+                "symboltoken": symbol_config['symboltoken'],
+                "interval": interval,
+                "fromdate": from_date,
+                "todate": to_date
+            }
+            
+            response = self.smart_api.getCandleData(candle_params)
+            
+            if response and response.get('status'):
+                candles = response.get('data', [])
+                logger.info(f"Fetched {len(candles)} candles for {symbol_config['tradingsymbol']}")
+                return candles
+            else:
+                logger.error(f"Failed to fetch candle data: {response}")
+                return None
+                
+        except TokenException as e:
+            logger.error(f"Token expired during candle fetch: {e}")
+            if self.reconnect():
+                return self.get_candle_data(from_date, to_date, interval, symbol_config)
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching candle data: {e}")
+            return None
+    
     def get_quote(self, symbol_config: Dict = None) -> Optional[Dict]:
         """
         Fetch full quote data for a symbol.
@@ -201,9 +276,8 @@ class AngelOneClient:
             symbol_config = self.RELIANCE_CONFIG
             
         try:
-            if not self.is_connected:
-                if not self.connect():
-                    return None
+            if not self._ensure_connected():
+                return None
             
             quote_data = self.smart_api.getMarketData(
                 mode='FULL',
@@ -269,10 +343,9 @@ class AngelOneClient:
         
         # Real order placement
         try:
-            if not self.is_connected:
-                if not self.connect():
-                    order_result['message'] = "Not connected to broker"
-                    return order_result
+            if not self._ensure_connected():
+                order_result['message'] = "Not connected to broker"
+                return order_result
             
             order_params = {
                 "variety": "NORMAL",
@@ -320,9 +393,8 @@ class AngelOneClient:
             dict: Position data or None if fetch fails
         """
         try:
-            if not self.is_connected:
-                if not self.connect():
-                    return None
+            if not self._ensure_connected():
+                return None
             
             positions = self.smart_api.position()
             return positions
@@ -338,9 +410,8 @@ class AngelOneClient:
             dict: Order book data or None if fetch fails
         """
         try:
-            if not self.is_connected:
-                if not self.connect():
-                    return None
+            if not self._ensure_connected():
+                return None
             
             orders = self.smart_api.orderBook()
             return orders
