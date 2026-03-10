@@ -52,6 +52,7 @@ FIXED_QUANTITY: int = int(_cfg["position_sizing"]["fixed_quantity"])
 FIXED_CAPITAL: float = float(_cfg["position_sizing"]["fixed_capital"])
 PERCENT_OF_CAPITAL: float = float(_cfg["position_sizing"]["percent_of_capital"])
 CAPITAL: float = float(_cfg["position_sizing"]["capital"])
+LEVERAGE: float = float(_cfg["position_sizing"].get("leverage", 5.0))
 
 # Market timings
 MARKET_OPEN: time = _parse_time(_cfg["market_timings"]["market_open"])
@@ -78,15 +79,17 @@ def compute_quantity(price: float) -> int:
     Returns:
         int: Number of shares (minimum 1).
     """
+    lev = max(1.0, LEVERAGE)
+
     if POSITION_SIZING_MODE == "fixed_quantity":
-        return max(1, FIXED_QUANTITY)
-
-    if POSITION_SIZING_MODE == "fixed_capital":
-        return max(1, int(FIXED_CAPITAL // price))
-
-    if POSITION_SIZING_MODE == "percent_of_capital":
+        base = max(1, FIXED_QUANTITY)
+    elif POSITION_SIZING_MODE == "fixed_capital":
+        base = max(1, int(FIXED_CAPITAL // price))
+    elif POSITION_SIZING_MODE == "percent_of_capital":
         amount = CAPITAL * (PERCENT_OF_CAPITAL / 100)
-        return max(1, int(amount // price))
+        base = max(1, int(amount // price))
+    else:
+        logger.warning(f"Unknown position sizing mode '{POSITION_SIZING_MODE}', falling back to 1")
+        base = 1
 
-    logger.warning(f"Unknown position sizing mode '{POSITION_SIZING_MODE}', falling back to 1")
-    return 1
+    return max(1, int(base * lev))

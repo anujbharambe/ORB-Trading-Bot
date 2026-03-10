@@ -22,6 +22,7 @@ position_sizing:
   fixed_capital: 10000
   percent_of_capital: 5
   capital: 100000
+  leverage: 5              # intraday margin multiplier (MIS gives 5x on NSE)
 
 # Market Timings (IST, 24-hour HH:MM)
 market_timings:
