@@ -25,3 +25,7 @@ logzero>=1.7.0
 
 # Optional: For enhanced data handling
 numpy>=1.24.0
+
+# Backtesting — charts and interactive visualisations
+matplotlib>=3.7.0
+plotly>=5.0.0

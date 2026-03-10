@@ -35,7 +35,7 @@
 - [ ] **Strategy plugin system** — Abstract a `BaseStrategy` interface so new strategies can be added as plugins without modifying core bot infrastructure.
 
 ## Phase 8: Backtesting
-- [ ] **Backtesting engine** — Reuse the strategy's `tick()` interface to replay against historical candle data and validate performance before live deployment.
+- [x] **Backtesting engine** — Full intraday backtester replaying exact 5-minute candle data through the ORB strategy logic. CLI (`python -m backtesting`) and Streamlit dashboard (`streamlit run backtesting/app.py`) with equity curve, drawdown, monthly/yearly returns heatmap, trade statistics, PnL distribution, Sharpe/Sortino/Calmar ratios, and downloadable trade log.
 - [ ] **Paper vs live analytics** — Compare paper trading results with live execution to measure slippage and execution quality.
 
 ## Phase 9: Testing & CI
