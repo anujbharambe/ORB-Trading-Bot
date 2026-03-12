@@ -52,7 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--pct-capital", type=float, default=5.0, help="Percent of capital per trade (default: 5.0)")
     p.add_argument("--leverage", type=float, default=5.0, help="Leverage multiplier (default: 5.0)")
     p.add_argument("--commission", type=float, default=0.05, help="Commission %% (default: 0.05)")
-    p.add_argument("--slippage", type=float, default=0.05, help="Slippage %% per side (default: 0.05)")
+    p.add_argument("--slippage", type=float, default=0.05, help="Slippage %%%% per side (default: 0.05)")
+    p.add_argument("--no-stop-loss", action="store_true", help="Disable range-based stop-loss (default: enabled)")
     p.add_argument("--output", default="backtesting_results", help="Output directory (default: backtesting_results/)")
     return p
 
@@ -73,6 +74,7 @@ def main(argv=None):
         leverage=args.leverage,
         commission_pct=args.commission,
         slippage_pct=args.slippage,
+        stop_loss_enabled=not args.no_stop_loss,
     )
 
     print()
@@ -85,6 +87,7 @@ def main(argv=None):
     print(f"  Leverage:   {config.leverage}x")
     print(f"  Commission: {config.commission_pct}%")
     print(f"  Slippage:   {config.slippage_pct}%")
+    print(f"  Stop-loss:  {'Range-based' if config.stop_loss_enabled else 'Disabled'}")
     print(f"  Date range: {config.start_date or 'all'} -> {config.end_date or 'all'}")
     print("=" * 60)
     print()
@@ -117,6 +120,8 @@ def _print_summary(m):
     print(f"  Max drawdown:     {m['max_drawdown_pct']:.2f}%")
     print(f"  Profit factor:    {m['profit_factor']:.3f}")
     print(f"  Avg trade PnL:    Rs.{m['avg_trade_pnl']:,.2f}")
+    print(f"  SL exits:         {m.get('stop_loss_count', 0)} ({m.get('stop_loss_pct', 0):.1f}%)")
+    print(f"  EOD exits:        {m.get('eod_exit_count', 0)}")
     print(f"  Final equity:     Rs.{m['final_equity']:,.2f}")
     print("-" * 50)
 

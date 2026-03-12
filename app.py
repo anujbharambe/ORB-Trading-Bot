@@ -13,7 +13,18 @@ from datetime import timedelta
 from strategy.bot_runner import BotRunner
 from strategy.orb_strategy import StrategyState, PositionType
 from utils.time_utils import TimeManager
-from utils.config import SYMBOL_CONFIG, POSITION_SIZING_MODE, FIXED_QUANTITY, FIXED_CAPITAL, PERCENT_OF_CAPITAL, CAPITAL, TRADES_LOG_PATH
+from utils.config import SYMBOL_CONFIG, POSITION_SIZING_MODE, FIXED_QUANTITY, FIXED_CAPITAL, PERCENT_OF_CAPITAL, CAPITAL, TRADES_LOG_PATH, STOP_LOSS_ENABLED, MAX_DAILY_TRADES
+from utils.trade_parser import parse_trades
+from backtesting.analytics import compute_metrics
+from utils.charts import (
+    render_summary,
+    render_equity_curve,
+    render_drawdown,
+    render_monthly_returns,
+    render_yearly_returns,
+    render_trade_stats,
+    render_pnl_distribution,
+)
 
 
 # Page configuration
@@ -147,7 +158,8 @@ def render_sidebar():
     else:
         st.sidebar.text(f"Position Size: {PERCENT_OF_CAPITAL}% of ₹{CAPITAL:,.0f}")
     st.sidebar.text("Leverage: ~5x (Intraday)")
-    st.sidebar.text("Stop Loss: None")
+    st.sidebar.text(f"Stop Loss: {'Range-based' if STOP_LOSS_ENABLED else 'None'}")
+    st.sidebar.text(f"Max Daily Trades: {MAX_DAILY_TRADES}")
 
 
 # ── Auto-refreshing dashboard fragment ─────────────────────────────
@@ -193,16 +205,36 @@ def live_dashboard():
             f"₹{state['entry_price']:,.2f}" if state['entry_price'] > 0 else "N/A",
         )
     with col3:
-        u_pnl = state['unrealized_pnl']
-        delta_color = "normal" if u_pnl >= 0 else "inverse"
-        st.metric(
-            "📊 Unrealized PnL",
-            f"₹{u_pnl:,.2f}",
-            delta=f"₹{u_pnl:,.2f}" if state['position'] != 'NONE' else None,
-            delta_color=delta_color if u_pnl != 0 else "off",
-        )
+        # Show stop-loss price when in position
+        if state.get('stop_loss_enabled') and state['position'] != 'NONE' and state.get('stop_loss_price'):
+            st.metric("🛑 Stop Loss", f"₹{state['stop_loss_price']:,.2f}")
+        else:
+            u_pnl = state['unrealized_pnl']
+            delta_color = "normal" if u_pnl >= 0 else "inverse"
+            st.metric(
+                "📊 Unrealized PnL",
+                f"₹{u_pnl:,.2f}",
+                delta=f"₹{u_pnl:,.2f}" if state['position'] != 'NONE' else None,
+                delta_color=delta_color if u_pnl != 0 else "off",
+            )
     with col4:
         st.metric("✅ Realized PnL", f"₹{state['realized_pnl']:,.2f}")
+
+    # Extra row for unrealized PnL and stop-loss when both should be visible
+    if state.get('stop_loss_enabled') and state['position'] != 'NONE' and state.get('stop_loss_price'):
+        col_extra1, col_extra2, col_extra3, col_extra4 = st.columns(4)
+        with col_extra1:
+            u_pnl = state['unrealized_pnl']
+            delta_color = "normal" if u_pnl >= 0 else "inverse"
+            st.metric(
+                "📊 Unrealized PnL",
+                f"₹{u_pnl:,.2f}",
+                delta=f"₹{u_pnl:,.2f}" if state['position'] != 'NONE' else None,
+                delta_color=delta_color if u_pnl != 0 else "off",
+            )
+        with col_extra2:
+            trades_left = max(0, state.get('max_daily_trades', 1) - state.get('trades_taken_count', 0))
+            st.metric("🔄 Trades Remaining", trades_left)
 
     st.divider()
 
@@ -242,6 +274,12 @@ def trade_log_fragment():
                 display_df = df.copy()
                 display_df['price'] = display_df['price'].apply(lambda x: f"₹{x:,.2f}")
                 display_df['pnl'] = display_df['pnl'].apply(lambda x: f"₹{x:,.2f}")
+                # Format range columns if present
+                for col in ('range_high', 'range_low'):
+                    if col in display_df.columns:
+                        display_df[col] = display_df[col].apply(
+                            lambda x: f"₹{float(x):,.2f}" if pd.notna(x) and str(x) != "" else ""
+                        )
                 st.dataframe(display_df.iloc[::-1], use_container_width=True, hide_index=True)
 
                 pnl_vals = df['pnl'].astype(float)
@@ -292,6 +330,44 @@ def range_visualization_fragment():
         st.info("Range data not available yet. Will display once range is established.")
 
 
+# ── Performance dashboard (auto-refreshes) ────────────────────────
+
+@st.fragment(run_every=timedelta(seconds=30))
+def performance_fragment():
+    """Forward-testing performance dashboard using live trade history."""
+    result = parse_trades()
+    if result is None or not result.trades:
+        st.info("No completed trades yet. Performance metrics will appear once entry+exit pairs are recorded.")
+        return
+
+    metrics = compute_metrics(result)
+
+    perf_tabs = st.tabs([
+        "📋 Summary",
+        "📈 Equity Curve",
+        "📉 Drawdown",
+        "📅 Monthly Returns",
+        "📊 Yearly Returns",
+        "🎯 Trade Stats",
+        "📊 PnL Distribution",
+    ])
+
+    with perf_tabs[0]:
+        render_summary(metrics)
+    with perf_tabs[1]:
+        render_equity_curve(result.daily_equity)
+    with perf_tabs[2]:
+        render_drawdown(result.daily_equity)
+    with perf_tabs[3]:
+        render_monthly_returns(metrics.get("monthly_returns", {}))
+    with perf_tabs[4]:
+        render_yearly_returns(metrics.get("yearly_returns", {}))
+    with perf_tabs[5]:
+        render_trade_stats(result.trades)
+    with perf_tabs[6]:
+        render_pnl_distribution(result.trades)
+
+
 # ── Main ───────────────────────────────────────────────────────────
 
 def main():
@@ -309,13 +385,15 @@ def main():
     render_sidebar()
 
     # Tabs with auto-refreshing fragments — no time.sleep, no st.rerun
-    tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "📝 Trade Log", "📈 Range Analysis"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Dashboard", "📝 Trade Log", "📈 Range Analysis", "📉 Performance"])
     with tab1:
         live_dashboard()
     with tab2:
         trade_log_fragment()
     with tab3:
         range_visualization_fragment()
+    with tab4:
+        performance_fragment()
 
 
 if __name__ == "__main__":

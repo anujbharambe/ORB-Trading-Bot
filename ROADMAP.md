@@ -10,7 +10,8 @@
 - [x] **Centralized configuration** — Tick interval (5s), health check interval (60s), retry delays, and market timings are scattered as hardcoded constants. Centralize all tunable parameters in one config file.
 
 ## Phase 2: Risk Management Infrastructure
-- [ ] **Stop-loss / trailing stop-loss** — No stop-loss exists. Add configurable stop-loss (fixed points, percentage, or ATR-based) as a risk management layer independent of strategy logic.
+- [x] **Stop-loss / trailing stop-loss** — ORB-native stop-loss at the opposite side of the range (LONG → SL at range low, SHORT → SL at range high). Configurable on/off via `risk.stop_loss_enabled` in config.yaml. No take-profit. Fully integrated in live strategy, backtesting engine, analytics, and both dashboards.
+- [x] **Daily trade limit** — Configurable `risk.max_daily_trades` (default 1). Properly restored on bot disconnect/restart via trade-count recovery from `trades.csv`.
 - [ ] **Max daily loss limit** — If cumulative daily PnL breaches a configurable threshold, auto-stop the bot for the day.
 - [ ] **Capital tracking & position limits** — Track available capital, prevent over-leveraging, enforce max position value.
 
@@ -22,9 +23,9 @@
 - [ ] **Disconnect/crash alerts** — Notify when broker disconnects, 3+ consecutive failures occur, or the bot crashes.
 
 ## Phase 5: Observability & Logging
-- [ ] **Structured logging** — Add structured JSON logging with log rotation and log every tick decision for post-market analysis.
-- [ ] **Performance metrics dashboard** — Extend the Streamlit UI with: win rate, avg win/loss, max drawdown, Sharpe ratio, equity curve chart, and calendar heatmap of daily PnL.
-- [ ] **Enrich trade log** — Add columns to `trades.csv`: range_high/low at entry, slippage (expected vs fill price), exit reason, strategy state at time of trade.
+- [x] **Structured logging** — JSON-formatted file logging via `utils/logger.py` with `TimedRotatingFileHandler` for daily rotation. Configurable log level, rotation days, and tick-decision logging via `config.yaml`.
+- [x] **Performance metrics dashboard** — New "Performance" tab in the live Streamlit dashboard with: equity curve, drawdown chart, monthly/yearly returns heatmaps, PnL distribution, trade statistics (win rate, Sharpe, Sortino, Calmar, profit factor, and more). Reuses `backtesting/analytics.py` via a live trade parser (`utils/trade_parser.py`).
+- [x] **Enrich trade log** — Added columns to `trades.csv`: `range_high`, `range_low`, `strategy_state`. `exit_reason` now properly populated on all rows. Shared chart functions extracted to `utils/charts.py`.
 
 ## Phase 6: Persistence & Database
 - [ ] **SQLite instead of CSV** — Replace CSV logging with SQLite for proper querying, concurrency safety, and easier analytics.

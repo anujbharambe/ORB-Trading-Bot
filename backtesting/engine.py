@@ -51,6 +51,9 @@ class BacktestConfig:
     commission_pct: float = 0.05  # total round-trip cost as % of trade value
     slippage_pct: float = 0.05  # per-side slippage as % of price
 
+    # Risk management
+    stop_loss_enabled: bool = True  # ORB-native SL at opposite side of range
+
 
 # ── Result container ───────────────────────────────────────────────
 
@@ -176,12 +179,37 @@ class BacktestEngine:
         if direction is None:
             return None  # no breakout today
 
-        # 3. Determine exit
-        exit_candle = get_exit_candle(day_candles)
-        if exit_candle is None:
-            return None  # shouldn't happen, but safety check
+        # 3. Determine exit — check stop-loss first, then EOD
+        exit_price = None
+        exit_time_ts = None
+        exit_reason = "EOD_EXIT"
 
-        exit_price = exit_candle["close"]
+        if self.config.stop_loss_enabled:
+            # SL = opposite side of the range
+            sl_price = range_low if direction == "LONG" else range_high
+
+            # Walk candles after breakout to find stop-loss hit
+            post_entry = trading_candles.loc[breakout_time:]
+            for ts, candle in post_entry.iterrows():
+                if direction == "LONG" and candle["low"] <= sl_price:
+                    exit_price = sl_price
+                    exit_time_ts = ts
+                    exit_reason = "STOP_LOSS"
+                    break
+                elif direction == "SHORT" and candle["high"] >= sl_price:
+                    exit_price = sl_price
+                    exit_time_ts = ts
+                    exit_reason = "STOP_LOSS"
+                    break
+
+        # If no stop-loss hit, use EOD exit
+        if exit_price is None:
+            exit_candle = get_exit_candle(day_candles)
+            if exit_candle is None:
+                return None  # shouldn't happen, but safety check
+            exit_price = exit_candle["close"]
+            exit_time_ts = exit_candle.name
+            exit_reason = "EOD_EXIT"
 
         # 4. Apply slippage
         slip = self.config.slippage_pct / 100.0
@@ -217,7 +245,8 @@ class BacktestEngine:
             "commission": round(commission, 2),
             "net_pnl": round(net_pnl, 2),
             "entry_time": str(breakout_time),
-            "exit_time": str(exit_candle.name),
+            "exit_time": str(exit_time_ts),
+            "exit_reason": exit_reason,
         }
 
     def _compute_quantity(self, price: float, current_equity: float) -> int:

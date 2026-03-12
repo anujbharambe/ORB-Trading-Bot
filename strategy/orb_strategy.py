@@ -15,11 +15,10 @@ import pandas as pd
 
 from utils.time_utils import TimeManager
 from broker.angel_client import AngelOneClient
-from utils.config import TRADES_LOG_PATH, SYMBOL_CONFIG, compute_quantity
+from utils.config import TRADES_LOG_PATH, SYMBOL_CONFIG, compute_quantity, STOP_LOSS_ENABLED, MAX_DAILY_TRADES, LOG_TICK_DECISIONS
+from utils.logger import setup_logger
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 
 class StrategyState(Enum):
@@ -78,8 +77,12 @@ class ORBState:
     current_price: float = 0.0
     quantity: int = 1
     
+    # Stop-loss
+    stop_loss_price: Optional[float] = None
+    
     # Trade tracking
     trade_taken_today: bool = False
+    trades_taken_count: int = 0
     last_trade_date: str = ""
     
     # PnL
@@ -102,9 +105,9 @@ class ORBStrategy:
     Strategy Rules:
     1. Build opening range from 9:15 AM to 11:15 AM IST
     2. After 11:15 AM, enter LONG on range high breakout, SHORT on range low breakdown
-    3. Only ONE trade per day
-    4. Exit at 3:20 PM
-    5. No stop loss
+    3. Max trades per day: configurable (default 1)
+    4. Exit at 3:20 PM or on stop-loss hit
+    5. Stop-loss: opposite side of the range (configurable on/off)
     6. Position size: configurable via config.yaml
     """
     
@@ -133,15 +136,17 @@ class ORBStrategy:
                 writer = csv.writer(f)
                 writer.writerow([
                     'timestamp', 'action', 'price', 'quantity', 
-                    'position_type', 'pnl', 'order_id'
+                    'position_type', 'pnl', 'order_id', 'exit_reason',
+                    'range_high', 'range_low', 'strategy_state'
                 ])
     
-    def _log_trade(self, trade: Trade) -> None:
+    def _log_trade(self, trade: Trade, exit_reason: str = "") -> None:
         """
         Log trade to CSV file.
         
         Args:
             trade: Trade object to log
+            exit_reason: Reason for exit (STOP_LOSS, EOD_EXIT, etc.) — empty for entry rows
         """
         try:
             with open(TRADES_LOG_PATH, 'a', newline='') as f:
@@ -153,9 +158,13 @@ class ORBStrategy:
                     trade.quantity,
                     trade.position_type,
                     trade.pnl,
-                    trade.order_id
+                    trade.order_id,
+                    exit_reason,
+                    self.state.range_high if self.state.range_high is not None else "",
+                    self.state.range_low if self.state.range_low is not None else "",
+                    self.state.strategy_state.value,
                 ])
-            logger.info(f"Trade logged: {trade.action} at {trade.price}")
+            logger.info(f"Trade logged: {trade.action} at {trade.price}" + (f" [{exit_reason}]" if exit_reason else ""))
         except Exception as e:
             logger.error(f"Error logging trade: {e}")
     
@@ -252,13 +261,18 @@ class ORBStrategy:
             if not exits.empty:
                 # Trade was completed today — set flag to prevent another trade
                 self.state.trade_taken_today = True
+                self.state.trades_taken_count = len(entries)
                 self.state.realized_pnl = float(exits['pnl'].sum())
                 self.state.position = PositionType.NONE
                 self.state.strategy_state = StrategyState.POSITION_CLOSED
-                logger.info("Recovery: Today's trade already completed (entry + exit found).")
+                logger.info(
+                    f"Recovery: Today's trade already completed (entry + exit found). "
+                    f"Trades taken: {self.state.trades_taken_count}/{MAX_DAILY_TRADES}"
+                )
             else:
                 # Open position found — restore it
                 self.state.trade_taken_today = True
+                self.state.trades_taken_count = len(entries)
                 self.state.entry_price = float(last_entry['price'])
                 self.state.quantity = int(last_entry['quantity'])
                 
@@ -267,10 +281,19 @@ class ORBStrategy:
                 else:
                     self.state.position = PositionType.SHORT
                 
+                # Restore stop-loss from recovered range
+                if STOP_LOSS_ENABLED and self.state.range_high is not None and self.state.range_low is not None:
+                    if self.state.position == PositionType.LONG:
+                        self.state.stop_loss_price = self.state.range_low
+                    else:
+                        self.state.stop_loss_price = self.state.range_high
+                    logger.info(f"Recovery: Stop-loss restored at {self.state.stop_loss_price}")
+                
                 self.state.strategy_state = StrategyState.POSITION_OPEN
                 logger.info(
                     f"Recovery: Restored {self.state.position.value} position "
-                    f"at {self.state.entry_price}"
+                    f"at {self.state.entry_price}. "
+                    f"Trades taken: {self.state.trades_taken_count}/{MAX_DAILY_TRADES}"
                 )
             
             return True
@@ -315,7 +338,7 @@ class ORBStrategy:
         if not self.state.range_complete:
             return PositionType.NONE
             
-        if self.state.trade_taken_today:
+        if self.state.trades_taken_count >= MAX_DAILY_TRADES:
             return PositionType.NONE
             
         if self.state.range_high is not None and price >= self.state.range_high:
@@ -339,8 +362,8 @@ class ORBStrategy:
         Returns:
             bool: True if position entered successfully
         """
-        if self.state.trade_taken_today:
-            logger.warning("Trade already taken today. Skipping entry.")
+        if self.state.trades_taken_count >= MAX_DAILY_TRADES:
+            logger.warning(f"Daily trade limit ({MAX_DAILY_TRADES}) reached. Skipping entry.")
             return False
             
         transaction_type = "BUY" if position_type == PositionType.LONG else "SELL"
@@ -359,7 +382,16 @@ class ORBStrategy:
             self.state.entry_price = order_result.get('price', price)
             self.state.quantity = qty
             self.state.trade_taken_today = True
+            self.state.trades_taken_count += 1
             self.state.strategy_state = StrategyState.POSITION_OPEN
+            
+            # Set stop-loss at the opposite side of the range
+            if STOP_LOSS_ENABLED:
+                if position_type == PositionType.LONG:
+                    self.state.stop_loss_price = self.state.range_low
+                else:  # SHORT
+                    self.state.stop_loss_price = self.state.range_high
+                logger.info(f"Stop-loss set at {self.state.stop_loss_price}")
             
             # Log the trade
             trade = Trade(
@@ -431,14 +463,15 @@ class ORBStrategy:
                 order_id=order_result.get('order_id', '')
             )
             self.state.trades.append(trade)
-            self._log_trade(trade)
+            self._log_trade(trade, exit_reason=reason)
             
-            logger.info(f"Exited {self.state.position.value} position at {exit_price}. PnL: {pnl}")
+            logger.info(f"Exited {self.state.position.value} position at {exit_price}. PnL: {pnl} [{reason}]")
             
             # Reset position
             self.state.position = PositionType.NONE
             self.state.entry_price = 0.0
             self.state.unrealized_pnl = 0.0
+            self.state.stop_loss_price = None
             self.state.strategy_state = StrategyState.POSITION_CLOSED
             
             return True
@@ -514,29 +547,59 @@ class ORBStrategy:
             # Check for exit time first
             if TimeManager.is_exit_time():
                 if self.state.position != PositionType.NONE:
-                    self.exit_position(price, "END_OF_DAY")
+                    self.exit_position(price, "EOD_EXIT")
                 self.state.strategy_state = StrategyState.POSITION_CLOSED
             
             # If no position, look for breakout
             elif self.state.position == PositionType.NONE:
                 self.state.strategy_state = StrategyState.WAITING_FOR_BREAKOUT
                 
-                if not self.state.trade_taken_today:
+                if self.state.trades_taken_count < MAX_DAILY_TRADES:
                     breakout = self.check_breakout(price)
                     if breakout != PositionType.NONE:
                         self.enter_position(breakout, price)
             
-            # If in position, update unrealized PnL
+            # If in position, check stop-loss then update unrealized PnL
             else:
                 self.state.strategy_state = StrategyState.POSITION_OPEN
                 self.update_unrealized_pnl(price)
+                
+                # Stop-loss check
+                if STOP_LOSS_ENABLED and self.state.stop_loss_price is not None:
+                    sl_hit = False
+                    if self.state.position == PositionType.LONG and price <= self.state.stop_loss_price:
+                        sl_hit = True
+                    elif self.state.position == PositionType.SHORT and price >= self.state.stop_loss_price:
+                        sl_hit = True
+                    
+                    if sl_hit:
+                        logger.info(
+                            f"STOP-LOSS HIT: price {price} breached SL {self.state.stop_loss_price} "
+                            f"for {self.state.position.value} position"
+                        )
+                        self.exit_position(price, "STOP_LOSS")
         
         elif TimeManager.is_exit_time():
             # Exit period - close any open position
             if self.state.position != PositionType.NONE:
-                self.exit_position(price, "END_OF_DAY")
+                self.exit_position(price, "EOD_EXIT")
             self.state.strategy_state = StrategyState.POSITION_CLOSED
         
+        # Tick decision logging (structured JSON)
+        if LOG_TICK_DECISIONS:
+            logger.debug(
+                "tick",
+                extra={"data": {
+                    "price": price,
+                    "state": self.state.strategy_state.value,
+                    "position": self.state.position.value,
+                    "range_high": self.state.range_high,
+                    "range_low": self.state.range_low,
+                    "unrealized_pnl": round(self.state.unrealized_pnl, 2),
+                    "stop_loss": self.state.stop_loss_price,
+                }},
+            )
+
         return self.get_state_summary()
     
     def start(self) -> bool:
@@ -590,9 +653,13 @@ class ORBStrategy:
             'position': self.state.position.value,
             'entry_price': self.state.entry_price,
             'quantity': self.state.quantity,
+            'stop_loss_price': self.state.stop_loss_price,
+            'stop_loss_enabled': STOP_LOSS_ENABLED,
             'unrealized_pnl': round(self.state.unrealized_pnl, 2),
             'realized_pnl': round(self.state.realized_pnl, 2),
             'trade_taken_today': self.state.trade_taken_today,
+            'trades_taken_count': self.state.trades_taken_count,
+            'max_daily_trades': MAX_DAILY_TRADES,
             'last_update': self.state.last_update,
             'error_message': self.state.error_message,
             'trades_today': len([t for t in self.state.trades if TimeManager.get_today_date() in t.timestamp]),

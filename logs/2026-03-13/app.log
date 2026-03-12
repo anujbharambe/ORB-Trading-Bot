@@ -1,0 +1,2 @@
+{"ts": "2026-03-13T00:02:54", "level": "INFO", "logger": "strategy.bot_runner", "msg": "BotRunner: entering main loop."}
+{"ts": "2026-03-13T00:02:54", "level": "INFO", "logger": "strategy.bot_runner", "msg": "BotRunner: strategy thread started."}

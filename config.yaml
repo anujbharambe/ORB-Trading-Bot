@@ -37,6 +37,15 @@ bot:
   health_check_interval: 60   # seconds between health checks
   retry_delays: [5, 10, 20]   # exponential backoff for reconnection (seconds)
 
+# Risk Management
+risk:
+  stop_loss_enabled: true      # enable ORB-native stop-loss (opposite side of the range)
+  max_daily_trades: 1          # max trades per day (set to 0 to disable trading)
+
 # Logging
 logging:
   trades_log_path: "logs/trades.csv"
+  app_log_dir: "logs"
+  log_level: "INFO"
+  log_rotation_days: 7
+  log_tick_decisions: false

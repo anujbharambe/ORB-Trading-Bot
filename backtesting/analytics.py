@@ -140,12 +140,32 @@ def compute_metrics(result: BacktestResult) -> Dict[str, Any]:
 
         # Total commissions
         metrics["total_commission"] = round(sum(t["commission"] for t in trades), 2)
+
+        # Stop-loss statistics
+        sl_trades = [t for t in trades if t.get("exit_reason") == "STOP_LOSS"]
+        eod_trades = [t for t in trades if t.get("exit_reason") != "STOP_LOSS"]
+        metrics["stop_loss_count"] = len(sl_trades)
+        metrics["stop_loss_pct"] = round(len(sl_trades) / n_trades * 100.0, 2) if n_trades else 0.0
+        metrics["eod_exit_count"] = len(eod_trades)
+
+        sl_pnls = [t["net_pnl"] for t in sl_trades]
+        eod_pnls = [t["net_pnl"] for t in eod_trades]
+        metrics["avg_pnl_stop_loss"] = round(np.mean(sl_pnls), 2) if sl_pnls else 0.0
+        metrics["avg_pnl_eod_exit"] = round(np.mean(eod_pnls), 2) if eod_pnls else 0.0
+
+        sl_wins = [p for p in sl_pnls if p > 0]
+        eod_wins = [p for p in eod_pnls if p > 0]
+        metrics["win_rate_stop_loss"] = round(len(sl_wins) / len(sl_pnls) * 100.0, 2) if sl_pnls else 0.0
+        metrics["win_rate_eod_exit"] = round(len(eod_wins) / len(eod_pnls) * 100.0, 2) if eod_pnls else 0.0
     else:
         for k in [
             "win_rate_pct", "avg_win", "avg_loss", "largest_win", "largest_loss",
             "avg_trade_pnl", "profit_factor", "gross_profit", "gross_loss",
             "max_consecutive_wins", "max_consecutive_losses", "long_trades",
             "short_trades", "trade_days_pct", "trades_per_year", "total_commission",
+            "stop_loss_count", "stop_loss_pct", "eod_exit_count",
+            "avg_pnl_stop_loss", "avg_pnl_eod_exit",
+            "win_rate_stop_loss", "win_rate_eod_exit",
         ]:
             metrics[k] = 0
 
@@ -221,7 +241,7 @@ def _monthly_returns(
     eq.index = pd.to_datetime(eq.index)
 
     # End-of-month equity
-    monthly_eq = eq.resample("ME").last()
+    monthly_eq = eq.resample("M").last()
 
     result: Dict[str, Dict[str, float]] = {}
     prev = initial_capital
@@ -249,7 +269,7 @@ def _yearly_returns(
     eq = equity_df["equity"].copy()
     eq.index = pd.to_datetime(eq.index)
 
-    yearly_eq = eq.resample("YE").last()
+    yearly_eq = eq.resample("Y").last()
     result: Dict[str, float] = {}
     prev = initial_capital
     for ts, val in yearly_eq.items():
@@ -308,6 +328,15 @@ def _write_text_report(
         f"  Total commission: ₹{metrics['total_commission']:>14,.2f}",
         f"  Consec. wins:       {metrics['max_consecutive_wins']:>12}",
         f"  Consec. losses:     {metrics['max_consecutive_losses']:>12}",
+        "",
+        "── Stop-Loss ───────────────────────────────────",
+        f"  SL exits:           {metrics['stop_loss_count']:>12}",
+        f"  SL exit %:          {metrics['stop_loss_pct']:>12.2f} %",
+        f"  EOD exits:          {metrics['eod_exit_count']:>12}",
+        f"  Avg PnL (SL):     ₹{metrics['avg_pnl_stop_loss']:>14,.2f}",
+        f"  Avg PnL (EOD):    ₹{metrics['avg_pnl_eod_exit']:>14,.2f}",
+        f"  Win rate (SL):      {metrics['win_rate_stop_loss']:>12.2f} %",
+        f"  Win rate (EOD):     {metrics['win_rate_eod_exit']:>12.2f} %",
         "",
         "── Exposure ────────────────────────────────────",
         f"  Trade-day %:        {metrics['trade_days_pct']:>12.2f} %",

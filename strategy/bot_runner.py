@@ -12,8 +12,9 @@ from broker.angel_client import AngelOneClient
 from strategy.orb_strategy import ORBStrategy
 from utils.time_utils import TimeManager
 from utils.config import TICK_INTERVAL, HEALTH_CHECK_INTERVAL
+from utils.logger import setup_logger
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__name__)
 
 # Derive the tick-count threshold from the two config values
 HEALTH_CHECK_EVERY_N_TICKS = max(1, HEALTH_CHECK_INTERVAL // TICK_INTERVAL)

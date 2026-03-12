@@ -67,6 +67,15 @@ RETRY_DELAYS: List[int] = [int(d) for d in _cfg["bot"]["retry_delays"]]
 
 # Logging
 TRADES_LOG_PATH: str = _cfg["logging"]["trades_log_path"]
+APP_LOG_DIR: str = _cfg["logging"].get("app_log_dir", "logs")
+LOG_LEVEL: str = _cfg["logging"].get("log_level", "INFO")
+LOG_ROTATION_DAYS: int = int(_cfg["logging"].get("log_rotation_days", 7))
+LOG_TICK_DECISIONS: bool = bool(_cfg["logging"].get("log_tick_decisions", False))
+
+# Risk management
+_risk = _cfg.get("risk", {})
+STOP_LOSS_ENABLED: bool = bool(_risk.get("stop_loss_enabled", False))
+MAX_DAILY_TRADES: int = int(_risk.get("max_daily_trades", 1))
 
 
 def compute_quantity(price: float) -> int:
